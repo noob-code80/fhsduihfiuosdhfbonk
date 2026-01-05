@@ -53,3 +53,6 @@ bincode = "1.3"
 
 # Явно указываем zeroize для разрешения конфликтов версий
 zeroize = "1.7"
+
+# OpenSSL с vendored feature для автоматической компиляции (не требует установки в системе)
+openssl = { version = "0.10", features = ["vendored"] }
