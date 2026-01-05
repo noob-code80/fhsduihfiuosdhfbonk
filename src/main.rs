@@ -928,7 +928,7 @@ async fn buy_token(
     // 1. ComputeBudget (2 раза)
     // 2. Associated Token Program: CreateIdempotent (если account не существует)
     // 3. PumpFun: Buy
-    let transaction_instructions = vec![
+    let mut transaction_instructions = vec![
         compute_budget_instruction,
         compute_unit_limit_instruction,
     ];
@@ -1350,11 +1350,12 @@ async fn handle_create_transaction(
                                     if let Some(meta) = tx.transaction.meta {
                                         // Пытаемся извлечь количество токенов из inner_instructions
                                         // Ищем TransferChecked инструкцию в последней inner instruction
-                                        let inner_instructions: Vec<_> = meta.inner_instructions.into();
+                                        let inner_instructions: Vec<_> = meta.inner_instructions.into_iter().collect();
                                         if let Some(last_inner) = inner_instructions.last() {
                                             if let Some(transfer_ix) = last_inner.instructions.last() {
                                                 // Декодируем data из base58
                                                 if let Ok(data_bytes) = bs58::decode(&transfer_ix.data).into_vec() {
+                                                    let data_bytes: Vec<u8> = data_bytes;
                                                     // TransferChecked: discriminator (1 byte) + amount (8 bytes)
                                                     // Проверяем что это TransferChecked (discriminator = 12)
                                                     if data_bytes.len() >= 12 && data_bytes[0] == 12 {
@@ -1652,10 +1653,10 @@ async fn monitor_position(state: AppState, idx: usize) {
                                                     let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                                                     let wallet = {
                                                         let s = state.read().await;
-                                                        s.wallet_keypair.as_ref()
+                                                        s.wallet_keypair.as_ref().map(|k| k.clone())
                                                     };
                                                     if let Some(wallet) = wallet {
-                                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
+                                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
                                                             error!("Sell failed: {}", e);
                                                         } else {
                                                             let mut s = state.write().await;
@@ -1729,10 +1730,10 @@ async fn monitor_position(state: AppState, idx: usize) {
                             let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                             let wallet = {
                                 let s = state.read().await;
-                                s.wallet_keypair.as_ref()
+                                s.wallet_keypair.as_ref().map(|k| k.clone())
                             };
                             if let Some(wallet) = wallet {
-                                if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
+                                if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
                                     error!("Sell failed: {}", e);
                                 } else {
                                     let mut s = state.write().await;
@@ -1864,7 +1865,10 @@ async fn monitor_positions(state: AppState) {
                 let min_sol_out = position.buy_sol * (1.0 + config.loss_threshold / 100.0);
                 let wallet_keypair = {
                     let s = state.read().await;
-                    s.wallet_keypair.as_ref().map(|k| (k.pubkey(), k))
+                    s.wallet_keypair.as_ref().map(|k| {
+                        let cloned = k.clone();
+                        (cloned.pubkey(), cloned)
+                    })
                 };
                 if let Some((_pubkey, wallet)) = wallet_keypair {
                     if profit_pct >= config.profit_threshold {
