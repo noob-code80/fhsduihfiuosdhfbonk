@@ -19,6 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 solana-client = "2.2"
 solana-sdk = "2.2"
 solana-transaction-status = "2.2"
+solana-compute-budget-interface = "2.2"
 
 # SPL Token для работы с токенами
 # Используем версии, совместимые с Solana SDK 2.2
