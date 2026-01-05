@@ -35,7 +35,7 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
-        targets: x86_64-pc-windows-msvc
+        targets: x86_64-pc-windows-gnu
     
     - name: Install Chocolatey (if needed)
       shell: pwsh
@@ -46,32 +46,51 @@ jobs:
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
         }
     
-    - name: Install protoc
+    - name: Install dependencies
       shell: pwsh
       run: |
-        choco install protoc -y
+        choco install protoc msys2 -y
         $protocPath = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
+        $msys2Path = "C:\tools\msys64"
+        
         if (Test-Path $protocPath) {
           echo "PROTOC=$protocPath" >> $env:GITHUB_ENV
-          echo "✅ protoc installed at $protocPath"
-        } else {
-          Write-Error "protoc not found after installation"
-          exit 1
+          echo "✅ protoc installed"
+        }
+        
+        if (Test-Path $msys2Path) {
+          # Устанавливаем autoconf и automake через pacman
+          $env:CHERE_INVOKING = "1"
+          $env:MSYSTEM = "MINGW64"
+          & "$msys2Path\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make"
+          
+          # Добавляем MSYS2 в PATH
+          echo "$msys2Path\mingw64\bin" >> $env:GITHUB_PATH
+          echo "$msys2Path\usr\bin" >> $env:GITHUB_PATH
+          echo "✅ MSYS2 installed"
         }
     
     - name: Build
       shell: pwsh
       run: |
         $env:RUST_BACKTRACE = "1"
-        $env:PROTOC = $env:PROTOC
-        cargo build --release
+        $env:PROTOC = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
+        # Используем MSYS2 MinGW для всей сборки
+        $env:CC = "gcc"
+        $env:CXX = "g++"
+        $env:MAKE = "make"
+        $env:PATH = "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;$env:PATH"
+        # Используем MinGW target вместо MSVC
+        cargo build --release --target x86_64-pc-windows-gnu
       env:
-        CARGO_TERM_COLOR: always
         PROTOC: C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe
+        CC: gcc
+        CXX: g++
+        MAKE: make
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: rust-sniper-windows
-        path: target/release/rust-sniper.exe
+        path: target/x86_64-pc-windows-gnu/release/rust-sniper.exe
         retention-days: 30
