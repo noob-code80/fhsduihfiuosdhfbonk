@@ -1,0 +1,54 @@
+name: Build Rust Sniper Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+    
+    - name: Cache Cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-sniper-cargo-
+    
+    - name: Cache Cargo build
+      uses: actions/cache@v4
+      with:
+        path: target
+        key: ${{ runner.os }}-sniper-build-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '**/*.rs') }}
+        restore-keys: |
+          ${{ runner.os }}-sniper-build-
+    
+    - name: Build
+      shell: pwsh
+      run: |
+        $env:RUST_BACKTRACE = "1"
+        cargo build --release
+      env:
+        CARGO_TERM_COLOR: always
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-sniper-windows
+        path: target/release/rust-sniper.exe
+        retention-days: 30
+
