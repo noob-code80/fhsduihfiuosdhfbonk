@@ -37,7 +37,6 @@ use bincode;
 use reqwest::Client; // Нужен для HTTP запросов к API тасков
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use futures::StreamExt;
-use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 
 // Конфигурация снайпера (загружается из тасков)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,7 +300,7 @@ fn parse_private_key(key_str: &str) -> Result<Keypair> {
         .context("Failed to decode base58 private key")?;
     
     if key_bytes.len() == 64 {
-        Keypair::from_bytes(&key_bytes)
+        Keypair::try_from(&key_bytes[..])
             .context("Failed to create keypair from bytes")
     } else {
         anyhow::bail!("Invalid key length: expected 64 bytes, got {}", key_bytes.len())
@@ -873,9 +872,9 @@ async fn buy_token(
     instruction_data.push(0); // track_volume: 0 = false (u8)
     
     // Создаем инструкцию ComputeBudget для установки приорити фии и комп юнитов
-    use solana_sdk::compute_budget;
-    let compute_budget_instruction = compute_budget::ComputeBudgetInstruction::set_compute_unit_price(final_price_micro_per_cu);
-    let compute_unit_limit_instruction = compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
+    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_price(final_price_micro_per_cu);
+    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
     
     
     // Создаем инструкцию buy для PumpFun
@@ -929,7 +928,7 @@ async fn buy_token(
     // 1. ComputeBudget (2 раза)
     // 2. Associated Token Program: CreateIdempotent (если account не существует)
     // 3. PumpFun: Buy
-    let mut transaction_instructions = vec![
+    let transaction_instructions = vec![
         compute_budget_instruction,
         compute_unit_limit_instruction,
     ];
@@ -1343,12 +1342,15 @@ async fn handle_create_transaction(
                     // Получаем количество токенов из транзакции
                     let held = {
                         let rpc = RpcClient::new(RPC_URL.to_string());
-                        match rpc.get_transaction(&signature, UiTransactionEncoding::JsonParsed).await {
-                            Ok(tx) => {
-                                if let Some(meta) = tx.transaction.meta {
-                                    // Пытаемся извлечь количество токенов из inner_instructions
-                                    // Ищем TransferChecked инструкцию в последней inner instruction
-                                    if let Some(inner_instructions) = meta.inner_instructions {
+                        let sig_bytes = bs58::decode(&signature).into_vec().ok()
+                            .and_then(|bytes| solana_sdk::signature::Signature::try_from(bytes.as_slice()).ok());
+                        if let Some(sig) = sig_bytes {
+                            match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
+                                Ok(tx) => {
+                                    if let Some(meta) = tx.transaction.meta {
+                                        // Пытаемся извлечь количество токенов из inner_instructions
+                                        // Ищем TransferChecked инструкцию в последней inner instruction
+                                        let inner_instructions: Vec<_> = meta.inner_instructions.into();
                                         if let Some(last_inner) = inner_instructions.last() {
                                             if let Some(transfer_ix) = last_inner.instructions.last() {
                                                 // Декодируем data из base58
@@ -1373,11 +1375,11 @@ async fn handle_create_transaction(
                                     } else {
                                         0
                                     }
-                                } else {
-                                    0
                                 }
+                                Err(_) => 0,
                             }
-                            Err(_) => 0,
+                        } else {
+                            0
                         }
                     };
                     
@@ -1523,9 +1525,9 @@ async fn sell_token(
         0
     };
     
-    use solana_sdk::compute_budget;
-    let compute_budget_instruction = compute_budget::ComputeBudgetInstruction::set_compute_unit_price(price_micro_per_cu);
-    let compute_unit_limit_instruction = compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
+    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_price(price_micro_per_cu);
+    let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
     
     let min_sol_lamports = (min_sol_out * 1e9) as u64;
     // Discriminator для sell: [157, 172, 117, 171, 172, 29, 38, 206]
@@ -1557,7 +1559,7 @@ async fn sell_token(
         data: instruction_data,
     };
     
-    let mut transaction_instructions = vec![
+    let transaction_instructions = vec![
         compute_budget_instruction,
         compute_unit_limit_instruction,
         sell_instruction,
@@ -1588,20 +1590,18 @@ async fn sell_token(
 
 // Мониторинг одной позиции через GRPC или RPC fallback
 async fn monitor_position(state: AppState, idx: usize) {
-    let (config, wallet, grpc_client) = {
+    let (config, grpc_client) = {
         let s = state.read().await;
         let config = s.config.clone();
-        let wallet = s.wallet_keypair.clone();
         let grpc_client = s.grpc_client.clone();
-        (config, wallet, grpc_client)
+        (config, grpc_client)
     };
     
-    if config.is_none() || wallet.is_none() {
+    if config.is_none() {
         return;
     }
     
     let config = config.unwrap();
-    let wallet = wallet.unwrap();
     
     if let Some(grpc) = grpc_client {
         let curve_str = {
@@ -1624,8 +1624,8 @@ async fn monitor_position(state: AppState, idx: usize) {
                             if let Some(update_oneof) = up.update_oneof {
                                 if let yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::Account(acc_update) = update_oneof {
                                     if let Some(account_info) = acc_update.account {
-                                        if let Some(data) = account_info.data {
-                                            if data.len() >= 24 {
+                                        let data = account_info.data;
+                                        if data.len() >= 24 {
                                                 let virtual_token = u64::from_le_bytes(
                                                     data[8..16].try_into().unwrap_or([0; 8])
                                                 );
@@ -1853,9 +1853,9 @@ async fn monitor_positions(state: AppState) {
                 let min_sol_out = position.buy_sol * (1.0 + config.loss_threshold / 100.0);
                 let wallet_keypair = {
                     let s = state.read().await;
-                    s.wallet_keypair.clone()
+                    s.wallet_keypair.as_ref().map(|k| (k.pubkey(), k))
                 };
-                if let Some(wallet) = wallet_keypair {
+                if let Some((_pubkey, wallet)) = wallet_keypair {
                     if profit_pct >= config.profit_threshold {
                         info!("💰 Profit target reached! Selling {} tokens (profit: {:.2}%)", 
                               position.mint, profit_pct);
