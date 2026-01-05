@@ -12,11 +12,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-pc-windows-msvc
-    
     - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
@@ -37,13 +32,42 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-sniper-build-
     
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+    
+    - name: Install Chocolatey (if needed)
+      shell: pwsh
+      run: |
+        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        }
+    
+    - name: Install protoc
+      shell: pwsh
+      run: |
+        choco install protoc -y
+        $protocPath = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
+        if (Test-Path $protocPath) {
+          echo "PROTOC=$protocPath" >> $env:GITHUB_ENV
+          echo "✅ protoc installed at $protocPath"
+        } else {
+          Write-Error "protoc not found after installation"
+          exit 1
+        }
+    
     - name: Build
       shell: pwsh
       run: |
         $env:RUST_BACKTRACE = "1"
+        $env:PROTOC = $env:PROTOC
         cargo build --release
       env:
         CARGO_TERM_COLOR: always
+        PROTOC: C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -51,4 +75,3 @@ jobs:
         name: rust-sniper-windows
         path: target/release/rust-sniper.exe
         retention-days: 30
-
