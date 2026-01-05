@@ -1,8 +1,7 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tonic_build::configure()
-        .build_server(false)
-        .build_client(true)
-        .compile(&["proto/geyser.proto"], &["proto"])?;
-    Ok(())
+// Пустой build.rs - больше не нужен, так как используем yellowstone-grpc-proto напрямую
+// без необходимости компиляции protobuf файлов
+
+fn main() {
+    // Ничего не делаем
 }
 
