@@ -29,7 +29,7 @@ pub struct CreateTransaction {
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient<yellowstone_grpc_client::crypto::DefaultCryptoProvider>>>,
+    client: Option<Arc<GeyserGrpcClient>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
