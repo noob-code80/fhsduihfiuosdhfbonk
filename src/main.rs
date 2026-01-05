@@ -1626,31 +1626,36 @@ async fn monitor_position(state: AppState, idx: usize) {
                                     if let Some(account_info) = acc_update.account {
                                         let data = account_info.data;
                                         if data.len() >= 24 {
-                                                let virtual_token = u64::from_le_bytes(
-                                                    data[8..16].try_into().unwrap_or([0; 8])
-                                                );
-                                                let virtual_sol = u64::from_le_bytes(
-                                                    data[16..24].try_into().unwrap_or([0; 8])
-                                                );
+                                            let virtual_token = u64::from_le_bytes(
+                                                data[8..16].try_into().unwrap_or([0; 8])
+                                            );
+                                            let virtual_sol = u64::from_le_bytes(
+                                                data[16..24].try_into().unwrap_or([0; 8])
+                                            );
+                                            
+                                            if virtual_token > 0 && virtual_sol > 0 {
+                                                let price = virtual_sol as f64 / virtual_token as f64;
+                                                let pos = {
+                                                    let s = state.read().await;
+                                                    if idx >= s.positions.len() {
+                                                        break;
+                                                    }
+                                                    s.positions[idx].clone()
+                                                };
                                                 
-                                                if virtual_token > 0 && virtual_sol > 0 {
-                                                    let price = virtual_sol as f64 / virtual_token as f64;
-                                                    let pos = {
+                                                let current_val = (pos.held_tokens as f64 * price) / 1e9;
+                                                let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
+                                                let mcap = (1_000_000_000.0 * price) / 1e9;
+                                                info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, mcap);
+                                                
+                                                if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
+                                                    let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
+                                                    let wallet = {
                                                         let s = state.read().await;
-                                                        if idx >= s.positions.len() {
-                                                            break;
-                                                        }
-                                                        s.positions[idx].clone()
+                                                        s.wallet_keypair.as_ref()
                                                     };
-                                                    
-                                                    let current_val = (pos.held_tokens as f64 * price) / 1e9;
-                                                    let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
-                                                    let mcap = (1_000_000_000.0 * price) / 1e9;
-                                                    info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, mcap);
-                                                    
-                                                    if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
-                                                        let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
+                                                    if let Some(wallet) = wallet {
+                                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
                                                             error!("Sell failed: {}", e);
                                                         } else {
                                                             let mut s = state.write().await;
@@ -1722,14 +1727,20 @@ async fn monitor_position(state: AppState, idx: usize) {
                         
                         if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
                             let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                            if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
-                                error!("Sell failed: {}", e);
-                            } else {
-                                let mut s = state.write().await;
-                                if idx < s.positions.len() {
-                                    s.positions.remove(idx);
+                            let wallet = {
+                                let s = state.read().await;
+                                s.wallet_keypair.as_ref()
+                            };
+                            if let Some(wallet) = wallet {
+                                if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
+                                    error!("Sell failed: {}", e);
+                                } else {
+                                    let mut s = state.write().await;
+                                    if idx < s.positions.len() {
+                                        s.positions.remove(idx);
+                                    }
+                                    break;
                                 }
-                                break;
                             }
                         }
                     }
