@@ -3,10 +3,8 @@
 
 use yellowstone_grpc_client::{GeyserGrpcClient, ClientTlsConfig};
 use yellowstone_grpc_proto::prelude::*;
-use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 use bs58;
-use tracing::{info, error, warn};
-use std::time::Duration;
+use tracing::{info, error};
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
@@ -31,7 +29,7 @@ pub struct CreateTransaction {
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient>>,
+    client: Option<Arc<GeyserGrpcClient<yellowstone_grpc_client::crypto::DefaultCryptoProvider>>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
@@ -82,7 +80,7 @@ impl GrpcClient {
             .context("Client not connected. Call connect() first")?;
         
         // Получаем stream и subscribe_tx
-        let (subscribe_tx, mut updates_stream) = client.subscribe().await?;
+        let (subscribe_tx, _updates_stream) = client.subscribe().await?;
         self.subscribe_tx = Some(subscribe_tx.clone());
         
         // Создаем filter для транзакций Pump.fun
@@ -90,12 +88,12 @@ impl GrpcClient {
         transactions_filter.insert(
             "pump_fun".to_string(),
             SubscribeRequestFilterTransactions {
-                account_include: vec![PUMP_FUN_PROGRAM_ID.to_string()],
+            account_include: vec![PUMP_FUN_PROGRAM_ID.to_string()],
                 vote: Some(false),
                 failed: Some(false),
                 signature: None,
-                account_exclude: vec![],
-                account_required: vec![],
+            account_exclude: vec![],
+            account_required: vec![],
             },
         );
         
@@ -128,6 +126,7 @@ impl GrpcClient {
                 account: vec![pubkey.to_string()],
                 owner: vec![],
                 filters: vec![],
+                nonempty_txn_signature: None,
             },
         );
         
@@ -186,22 +185,22 @@ pub fn parse_create_transaction_from_grpc(tx: &SubscribeUpdateTransaction) -> Op
     } else {
         return None;
     };
-
+    
     // Получаем creator (первый аккаунт)
     let creator_address = if let Some(tx_transaction) = tx_data.transaction.as_ref() {
         if let Some(message) = tx_transaction.message.as_ref() {
             if let Some(first_key) = message.account_keys.first() {
                 bs58::encode(first_key).into_string()
             } else {
-                return None;
-            }
+        return None;
+    }
         } else {
             return None;
         }
     } else {
         return None;
     };
-
+    
     // Получаем mint из post_token_balances
     let post_balances = &meta.post_token_balances;
     let pre_balances = &meta.pre_token_balances;
@@ -214,18 +213,18 @@ pub fn parse_create_transaction_from_grpc(tx: &SubscribeUpdateTransaction) -> Op
     for balance in post_balances {
         let mint = &balance.mint;
         if !pre_mints.contains(mint) && !mint.contains("11111111111111111111111111111111") {
-            candidate_mints.push(mint.clone());
+                candidate_mints.push(mint.clone());
+            }
         }
-    }
     
     let mint_address = candidate_mints.iter()
         .find(|m| m.ends_with("pump"))
         .or_else(|| candidate_mints.first())
         .cloned()?;
-
+    
     // Получаем slot из верхнего уровня SubscribeUpdateTransaction
     let slot = tx.slot as u64;
-
+    
     Some(CreateTransaction {
         signature,
         mint_address,
