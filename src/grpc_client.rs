@@ -5,7 +5,7 @@ use yellowstone_grpc_client::{GeyserGrpcClient, ClientTlsConfig};
 use yellowstone_grpc_proto::prelude::*;
 use bs58;
 use tracing::{info, error};
-use futures::{SinkExt, StreamExt, stream::BoxStream};
+use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::error::Error;
 use anyhow::{Result, Context};
@@ -25,12 +25,12 @@ pub struct CreateTransaction {
     pub is_create_v2: bool,
 }
 
-// Используем тип с CryptoProvider из rustls::crypto::aws_lc_rs
-#[derive(Clone, Debug)]
+// Используем тип без явного CryptoProvider (используется default из main)
+#[derive(Clone)]
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>>>,
+    client: Option<Arc<GeyserGrpcClient>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
@@ -47,7 +47,7 @@ impl GrpcClient {
     pub async fn connect(&mut self) -> Result<()> {
         info!("🔌 Connecting to GRPC endpoint: {}", self.endpoint);
         
-        // Создаем клиент
+        // Создаем клиент (как в rust_grpc_proxy)
         let client = GeyserGrpcClient::build_from_shared(self.endpoint.clone())
             .map_err(|e| {
                 error!("Failed to create GRPC client builder: {}", e);
@@ -115,8 +115,11 @@ impl GrpcClient {
         Ok(())
     }
     
-    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<futures::stream::BoxStream<'static, Result<SubscribeUpdate, yellowstone_grpc_client::GeyserGrpcClientError>>> {
-        let (mut subscribe_tx, updates_stream) = self.client.as_ref().unwrap().subscribe().await?;
+    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<impl StreamExt<Item = Result<SubscribeUpdate, yellowstone_grpc_client::GeyserGrpcClientError>>> {
+        let client = self.client.as_ref()
+            .context("Client not connected. Call connect() first")?;
+        
+        let (mut subscribe_tx, updates_stream) = client.subscribe().await?;
         let mut accounts_filter = HashMap::new();
         accounts_filter.insert(
             "bonding_curve".to_string(),
@@ -124,7 +127,6 @@ impl GrpcClient {
                 account: vec![pubkey.to_string()],
                 owner: vec![],
                 filters: vec![],
-                nonempty_txn_signature: None,
             },
         );
         let request = SubscribeRequest {
@@ -133,7 +135,7 @@ impl GrpcClient {
             ..Default::default()
         };
         subscribe_tx.send(request).await?;
-        Ok(Box::pin(updates_stream))
+        Ok(updates_stream)
     }
 
     pub async fn disconnect(&mut self) -> Result<()> {
