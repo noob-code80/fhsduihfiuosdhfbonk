@@ -5,7 +5,7 @@ use yellowstone_grpc_client::{GeyserGrpcClient, ClientTlsConfig};
 use yellowstone_grpc_proto::prelude::*;
 use bs58;
 use tracing::{info, error};
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, stream::BoxStream};
 use std::collections::HashMap;
 use std::error::Error;
 use anyhow::{Result, Context};
@@ -26,6 +26,7 @@ pub struct CreateTransaction {
 }
 
 // Используем тип с CryptoProvider из rustls::crypto::aws_lc_rs
+#[derive(Clone, Debug)]
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
@@ -114,17 +115,8 @@ impl GrpcClient {
         Ok(())
     }
     
-    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<impl StreamExt<Item = Result<SubscribeUpdate, yellowstone_grpc_client::GeyserGrpcClientError>>> {
-        let client = self.client.as_ref()
-            .context("Client not connected. Call connect() first")?;
-        
-        // Получаем stream и subscribe_tx
-        let (mut subscribe_tx, updates_stream): (
-            futures::channel::mpsc::Sender<SubscribeRequest>,
-            _
-        ) = client.subscribe().await?;
-        
-        // Создаем filter для аккаунта
+    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<futures::stream::BoxStream<'static, Result<SubscribeUpdate, yellowstone_grpc_client::GeyserGrpcClientError>>> {
+        let (mut subscribe_tx, updates_stream) = self.client.as_ref().unwrap().subscribe().await?;
         let mut accounts_filter = HashMap::new();
         accounts_filter.insert(
             "bonding_curve".to_string(),
@@ -135,19 +127,13 @@ impl GrpcClient {
                 nonempty_txn_signature: None,
             },
         );
-        
-        // Создаем subscription request
         let request = SubscribeRequest {
             accounts: accounts_filter,
             commitment: Some(CommitmentLevel::Processed as i32),
             ..Default::default()
         };
-        
-        // Отправляем subscription request
         subscribe_tx.send(request).await?;
-        info!("✅ Subscribed to account: {}", pubkey);
-        
-        Ok(updates_stream)
+        Ok(Box::pin(updates_stream))
     }
 
     pub async fn disconnect(&mut self) -> Result<()> {
