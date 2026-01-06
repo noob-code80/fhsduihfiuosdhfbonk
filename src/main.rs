@@ -1098,24 +1098,24 @@ async fn buy_token(
     let status_sleep_ms = if low_latency { 200 } else { 400 };
     
     for attempt in 1..=max_status_attempts {
-        match rpc_client.get_signature_statuses_with_commitment(&[signature], solana_sdk::commitment_config::CommitmentConfig::confirmed()).await {
-            Ok(statuses) => {
-                if let Some(Some(status_result)) = statuses.first() {
-                    match status_result {
-                        Ok(_) => {
-                            confirmed = true;
-                            info!("✅ Transaction CONFIRMED! Signature: {}", signature);
-                            break;
-                        }
-                        Err(err) => {
-                            error_msg = Some(format!("{:?}", err));
-                            failed = true;
-                            error!("❌ Transaction FAILED: {:?}", err);
-                            break;
-                        }
+        match rpc_client.get_signature_status_with_commitment(&signature, solana_sdk::commitment_config::CommitmentConfig::confirmed()).await {
+            Ok(Some(status_result)) => {
+                match status_result {
+                    Ok(_) => {
+                        confirmed = true;
+                        info!("✅ Transaction CONFIRMED! Signature: {}", signature);
+                        break;
                     }
-                } else {
-                    if attempt < max_status_attempts {
+                    Err(err) => {
+                        error_msg = Some(format!("{:?}", err));
+                        failed = true;
+                        error!("❌ Transaction FAILED: {:?}", err);
+                        break;
+                    }
+                }
+            }
+            Ok(None) => {
+                if attempt < max_status_attempts {
                         if !low_latency && attempt % 5 == 0 {
                             info!("⏳ Transaction pending, waiting... (attempt {}/{})", attempt, max_status_attempts);
                         }
@@ -1345,7 +1345,7 @@ async fn handle_create_transaction(
                         match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
                             Ok(tx) => {
                                 if let Some(meta) = tx.transaction.meta {
-                                    use solana_transaction_status::OptionSerializer;
+                                    use solana_transaction_status_client_types::option_serializer::OptionSerializer;
                                     if let OptionSerializer::Some(inner) = meta.inner_instructions {
                                         let transfer = inner.last().and_then(|i| i.instructions.last());
                                         if let Some(t) = transfer {
@@ -1576,9 +1576,9 @@ async fn sell_token(
 
 // Мониторинг одной позиции через GRPC или RPC fallback
 async fn monitor_position(state: AppState, idx: usize) {
-    let (config, wallet, grpc_client) = {
+    let (config, grpc_client) = {
         let s = state.read().await;
-        (s.config.clone().unwrap(), s.wallet_keypair.clone(), s.grpc_client.clone())
+        (s.config.clone().unwrap(), s.grpc_client.clone())
     };
     
     if let Some(grpc) = grpc_client {
@@ -1607,12 +1607,18 @@ async fn monitor_position(state: AppState, idx: usize) {
                                     
                                     if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
                                         let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet.unwrap(), config.priority_fee, config.compute_units).await {
-                                            error!("Sell failed: {}", e);
-                                        } else {
-                                            let mut s = state.write().await;
-                                            s.positions.remove(idx);
-                                            break;
+                                        let wallet = {
+                                            let s = state.read().await;
+                                            s.wallet_keypair.as_ref()
+                                        };
+                                        if let Some(wallet) = wallet {
+                                            if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
+                                                error!("Sell failed: {}", e);
+                                            } else {
+                                                let mut s = state.write().await;
+                                                s.positions.remove(idx);
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -1665,11 +1671,11 @@ async fn monitor_position(state: AppState, idx: usize) {
                             
                             if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
                                 let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                                let wallet = {
-                                    let s = state.read().await;
-                                    s.wallet_keypair.clone()
-                                };
-                                if let Some(wallet) = wallet {
+                            let wallet = {
+                                let s = state.read().await;
+                                s.wallet_keypair.as_ref()
+                            };
+                            if let Some(wallet) = wallet {
                                     if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
                                         error!("Sell failed: {}", e);
                                     } else {
@@ -1803,7 +1809,7 @@ async fn monitor_positions(state: AppState) {
                 let min_sol_out = position.buy_sol * (1.0 + config.loss_threshold / 100.0);
                 let wallet_keypair = {
                     let s = state.read().await;
-                    s.wallet_keypair.clone().map(|k| {
+                    s.wallet_keypair.as_ref().map(|k| {
                         (k.pubkey(), k)
                     })
                 };
@@ -2004,7 +2010,16 @@ async fn main() -> Result<()> {
     info!("🚀 Rust Sniper API server started on port 8723");
     info!("📡 Waiting for configuration from UI...");
     
-    axum::serve(listener, app).await?;
+    use axum::Server;
+    use tokio::net::TcpListener as TokioTcpListener;
+    use std::net::TcpListener as StdTcpListener;
+    
+    let std_listener = listener.into_std()?;
+    let listener = TokioTcpListener::from_std(std_listener)?;
+    
+    Server::from_tcp(listener)?
+        .serve(app.into_make_service())
+        .await?;
     
     Ok(())
 }
