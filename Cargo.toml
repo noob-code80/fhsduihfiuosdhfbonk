@@ -13,7 +13,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # HTTP client для API запросов и SSE
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Используем reqwest 0.11 для совместимости с zeroize <1.4 (требуется Solana 1.18.26)
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 
 # Solana - версия 1.18.26 для совместимости
 solana-client = "1.18.26"
