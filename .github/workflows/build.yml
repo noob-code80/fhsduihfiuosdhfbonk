@@ -68,9 +68,23 @@ jobs:
       run: |
         if (!(Test-Path "C:\msys64")) {
           choco install msys2 --params "/NoPath" -y
-          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -Syu --noconfirm"
-          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make"
+          Start-Sleep -Seconds 10
         }
+        # Всегда проверяем и устанавливаем autoconf, automake, make (даже если MSYS2 закеширован)
+        $env:CHERE_INVOKING = "1"
+        $env:MSYSTEM = "MINGW64"
+        $env:PATH = "C:\msys64\usr\bin;C:\msys64\mingw64\bin;$env:PATH"
+        
+        # Обновляем базу пакетов
+        & "C:\msys64\usr\bin\bash.exe" -lc "pacman -Sy --noconfirm"
+        
+        # Устанавливаем необходимые пакеты
+        $autoconfPath = "C:\msys64\usr\bin\autoconf.exe"
+        $automakePath = "C:\msys64\usr\bin\automake.exe"
+        if (!(Test-Path $autoconfPath) -or !(Test-Path $automakePath)) {
+          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make gcc"
+        }
+        
         if (!(Test-Path "C:\ProgramData\chocolatey\bin\protoc.exe")) {
           choco install protoc -y
         }
@@ -84,10 +98,15 @@ jobs:
         export CC="gcc"
         export CXX="g++"
         export MAKE="make"
-        export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:$PATH"
+        # Важно: сначала /usr/bin для autoconf/automake, потом mingw64/bin для gcc
+        export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
         
-        # Проверяем что cargo доступен
+        # Проверяем что все инструменты доступны
         cargo --version
+        autoconf --version || echo "autoconf not found"
+        automake --version || echo "automake not found"
+        gcc --version
+        make --version
         
         # Определяем working directory
         if [ -f "sniper_backup/Cargo.toml" ]; then
