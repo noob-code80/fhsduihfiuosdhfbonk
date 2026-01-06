@@ -101,9 +101,10 @@ jobs:
         export MAKE="make"
         # Важно: сначала /usr/bin для autoconf/automake, потом mingw64/bin для gcc и zstd
         export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
-        # Используем системную библиотеку zstd вместо компиляции из исходников
-        export ZSTD_SYS_USE_PKG_CONFIG=1
-        export PKG_CONFIG_PATH="/c/msys64/mingw64/lib/pkgconfig"
+        # Отключаем pkg-config для zstd и используем встроенную компиляцию из исходников
+        # Это избегает проблем с кросс-компиляцией pkg-config
+        export LIBZSTD_NO_PKG_CONFIG=1
+        export ZSTD_SYS_USE_PKG_CONFIG=0
         
         # Проверяем что все инструменты доступны
         cargo --version
