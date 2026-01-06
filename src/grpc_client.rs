@@ -25,12 +25,12 @@ pub struct CreateTransaction {
     pub is_create_v2: bool,
 }
 
-// Используем тип без явного CryptoProvider (используется default из main)
-#[derive(Clone)]
+// Используем тип с CryptoProvider из rustls::crypto::aws_lc_rs
+#[derive(Clone, Debug)]
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient>>,
+    client: Option<Arc<GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
@@ -119,7 +119,7 @@ impl GrpcClient {
         let client = self.client.as_ref()
             .context("Client not connected. Call connect() first")?;
         
-        let (mut subscribe_tx, updates_stream) = client.subscribe().await?;
+        let (mut subscribe_tx, updates_stream): (futures::channel::mpsc::Sender<SubscribeRequest>, _) = client.subscribe().await?;
         let mut accounts_filter = HashMap::new();
         accounts_filter.insert(
             "bonding_curve".to_string(),
@@ -127,6 +127,7 @@ impl GrpcClient {
                 account: vec![pubkey.to_string()],
                 owner: vec![],
                 filters: vec![],
+                nonempty_txn_signature: None,
             },
         );
         let request = SubscribeRequest {
