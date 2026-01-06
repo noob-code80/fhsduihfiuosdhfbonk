@@ -29,7 +29,7 @@ spl-associated-token-account = "2.3"
 # GRPC для Yellowstone
 yellowstone-grpc-client = "1.2.0"
 yellowstone-grpc-proto = "1.1.1"
-rustls = { version = "0.21", features = ["ring"] }
+rustls = "0.21"
 tokio-stream = "0.1"
 
 # Base58 encoding
