@@ -21,15 +21,18 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           sniper_backup/target/
-        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('sniper_backup/Cargo.lock') }}
+          target/
+        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('sniper_backup/Cargo.lock', 'Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-sniper-cargo-
     
     - name: Cache Cargo build artifacts
       uses: actions/cache@v4
       with:
-        path: sniper_backup/target/
-        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock', 'sniper_backup/Cargo.toml', 'sniper_backup/**/*.rs') }}
+        path: |
+          sniper_backup/target/
+          target/
+        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock', 'sniper_backup/Cargo.toml', 'sniper_backup/**/*.rs', 'Cargo.lock', 'Cargo.toml', '**/*.rs') }}
         restore-keys: |
           ${{ runner.os }}-sniper-build-
     
@@ -82,7 +85,6 @@ jobs:
     
     - name: Build
       shell: pwsh
-      working-directory: sniper_backup
       run: |
         $env:RUST_BACKTRACE = "1"
         $env:PROTOC = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
@@ -103,5 +105,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: rust-sniper-windows
-        path: sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
+        path: |
+          sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
+          target/x86_64-pc-windows-gnu/release/rust-sniper.exe
         retention-days: 30
+        if-no-files-found: error
