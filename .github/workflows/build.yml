@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Cache Cargo registry and build
+    - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
         path: |
@@ -21,29 +21,33 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           sniper_backup/target/
-          target/
-        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('sniper_backup/Cargo.lock', 'Cargo.lock') }}
+        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('sniper_backup/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-sniper-cargo-
     
-    - name: Cache Cargo build artifacts
+    - name: Cache Cargo build
       uses: actions/cache@v4
       with:
-        path: |
-          sniper_backup/target/
-          target/
-        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock', 'sniper_backup/Cargo.toml', 'sniper_backup/**/*.rs', 'Cargo.lock', 'Cargo.toml', '**/*.rs') }}
+        path: sniper_backup/target/
+        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-sniper-build-
     
     - name: Cache MSYS2 packages
       uses: actions/cache@v4
       with:
-        path: |
-          C:\tools\msys64\var\cache\pacman
+        path: C:\tools\msys64\var\cache\pacman
         key: ${{ runner.os }}-msys2-packages
         restore-keys: |
           ${{ runner.os }}-msys2-packages-
+    
+    - name: Cache Chocolatey packages
+      uses: actions/cache@v4
+      with:
+        path: C:\ProgramData\chocolatey\lib
+        key: ${{ runner.os }}-choco-packages
+        restore-keys: |
+          ${{ runner.os }}-choco-packages-
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
@@ -62,9 +66,16 @@ jobs:
     - name: Install dependencies
       shell: pwsh
       run: |
-        choco install protoc msys2 -y
+        # Устанавливаем только если не закешировано
         $protocPath = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
         $msys2Path = "C:\tools\msys64"
+        
+        if (-not (Test-Path $protocPath)) {
+          choco install protoc -y
+        }
+        if (-not (Test-Path $msys2Path)) {
+          choco install msys2 -y
+        }
         
         if (Test-Path $protocPath) {
           echo "PROTOC=$protocPath" >> $env:GITHUB_ENV
@@ -72,10 +83,13 @@ jobs:
         }
         
         if (Test-Path $msys2Path) {
-          # Устанавливаем autoconf и automake через pacman
-          $env:CHERE_INVOKING = "1"
-          $env:MSYSTEM = "MINGW64"
-          & "$msys2Path\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make"
+          # Устанавливаем autoconf и automake через pacman только если не установлены
+          $autoconfPath = "$msys2Path\usr\bin\autoconf.exe"
+          if (-not (Test-Path $autoconfPath)) {
+            $env:CHERE_INVOKING = "1"
+            $env:MSYSTEM = "MINGW64"
+            & "$msys2Path\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make"
+          }
           
           # Добавляем MSYS2 в PATH
           echo "$msys2Path\mingw64\bin" >> $env:GITHUB_PATH
@@ -85,6 +99,7 @@ jobs:
     
     - name: Build
       shell: pwsh
+      working-directory: sniper_backup
       run: |
         $env:RUST_BACKTRACE = "1"
         $env:PROTOC = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
@@ -105,8 +120,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: rust-sniper-windows
-        path: |
-          sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
-          target/x86_64-pc-windows-gnu/release/rust-sniper.exe
+        path: sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
         retention-days: 30
-        if-no-files-found: error
