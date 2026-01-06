@@ -1622,74 +1622,74 @@ async fn monitor_position(state: AppState, idx: usize) {
             }
         }
     } else {
-    
-    // Fallback RPC poll
-    let rpc = RpcClient::new(RPC_URL.to_string());
-    let curve = {
-        let s = state.read().await;
-        if idx >= s.positions.len() {
-            return;
-        }
-        s.positions[idx].bonding_curve
-    };
-    
-    loop {
-        // Проверяем что позиция еще существует
-        {
+        // Fallback RPC poll
+        let rpc = RpcClient::new(RPC_URL.to_string());
+        let curve = {
             let s = state.read().await;
             if idx >= s.positions.len() {
-                break;
+                return;
             }
-        }
+            s.positions[idx].bonding_curve
+        };
         
-        match rpc.get_account_data(&curve).await {
-            Ok(data) => {
-                if data.len() >= 24 {
-                    let virtual_token = u64::from_le_bytes(data[8..16].try_into().unwrap_or([0; 8]));
-                    let virtual_sol = u64::from_le_bytes(data[16..24].try_into().unwrap_or([0; 8]));
-                    
-                    if virtual_token > 0 && virtual_sol > 0 {
-                        let price = virtual_sol as f64 / virtual_token as f64;
-                        let pos = {
-                            let s = state.read().await;
-                            if idx >= s.positions.len() {
-                                break;
-                            }
-                            s.positions[idx].clone()
-                        };
+        loop {
+            // Проверяем что позиция еще существует
+            {
+                let s = state.read().await;
+                if idx >= s.positions.len() {
+                    break;
+                }
+            }
+            
+            match rpc.get_account_data(&curve).await {
+                Ok(data) => {
+                    if data.len() >= 24 {
+                        let virtual_token = u64::from_le_bytes(data[8..16].try_into().unwrap_or([0; 8]));
+                        let virtual_sol = u64::from_le_bytes(data[16..24].try_into().unwrap_or([0; 8]));
                         
-                        let current_val = (pos.held_tokens as f64 * price) / 1e9;
-                        let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
-                        let mcap = (1_000_000_000.0 * price) / 1e9;
-                        info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, mcap);
-                        
-                        if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
-                            let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                            let wallet = {
+                        if virtual_token > 0 && virtual_sol > 0 {
+                            let price = virtual_sol as f64 / virtual_token as f64;
+                            let pos = {
                                 let s = state.read().await;
-                                s.wallet_keypair.clone()
-                            };
-                            if let Some(wallet) = wallet {
-                                if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
-                                    error!("Sell failed: {}", e);
-                                } else {
-                                    let mut s = state.write().await;
-                                    if idx < s.positions.len() {
-                                        s.positions.remove(idx);
-                                    }
+                                if idx >= s.positions.len() {
                                     break;
+                                }
+                                s.positions[idx].clone()
+                            };
+                            
+                            let current_val = (pos.held_tokens as f64 * price) / 1e9;
+                            let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
+                            let mcap = (1_000_000_000.0 * price) / 1e9;
+                            info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, mcap);
+                            
+                            if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
+                                let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
+                                let wallet = {
+                                    let s = state.read().await;
+                                    s.wallet_keypair.clone()
+                                };
+                                if let Some(wallet) = wallet {
+                                    if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
+                                        error!("Sell failed: {}", e);
+                                    } else {
+                                        let mut s = state.write().await;
+                                        if idx < s.positions.len() {
+                                            s.positions.remove(idx);
+                                        }
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                Err(e) => {
+                    debug!("Failed to read bonding curve: {}", e);
+                }
             }
-            Err(e) => {
-                debug!("Failed to read bonding curve: {}", e);
-            }
+            
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
-        
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 }
 
