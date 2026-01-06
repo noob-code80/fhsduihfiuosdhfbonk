@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 # Web framework для API
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.6", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -27,8 +27,8 @@ spl-token = "5.0"
 spl-associated-token-account = "4.0"
 
 # GRPC для Yellowstone
-yellowstone-grpc-client = "10.2.0"
-yellowstone-grpc-proto = "10.1.1"
+yellowstone-grpc-client = "1.2.0"
+yellowstone-grpc-proto = "1.1.1"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 tokio-stream = "0.1"
 
