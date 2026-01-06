@@ -25,12 +25,14 @@ pub struct CreateTransaction {
     pub is_create_v2: bool,
 }
 
-// Используем тип с CryptoProvider из rustls::crypto::aws_lc_rs
-#[derive(Clone, Debug)]
+// Используем type alias для упрощения (CryptoProvider устанавливается в main через default_provider)
+type GeyserClient = GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>;
+
+// Используем тип без явного CryptoProvider в определении (используется default из main)
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>>>,
+    client: Option<Arc<GeyserClient>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
@@ -115,7 +117,7 @@ impl GrpcClient {
         Ok(())
     }
     
-    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<impl StreamExt<Item = Result<SubscribeUpdate, yellowstone_grpc_client::GeyserGrpcClientError>>> {
+    pub async fn subscribe_to_account(&mut self, pubkey: &str) -> Result<impl StreamExt<Item = Result<SubscribeUpdate>>> {
         let client = self.client.as_ref()
             .context("Client not connected. Call connect() first")?;
         
@@ -136,7 +138,7 @@ impl GrpcClient {
             ..Default::default()
         };
         subscribe_tx.send(request).await?;
-        Ok(updates_stream)
+        Ok(updates_stream.map(|r| r.map_err(|e| anyhow::anyhow!("GRPC error: {}", e))))
     }
 
     pub async fn disconnect(&mut self) -> Result<()> {
@@ -146,6 +148,20 @@ impl GrpcClient {
         Ok(())
     }
 }
+
+impl Clone for GrpcClient {
+    fn clone(&self) -> Self {
+        Self {
+            endpoint: self.endpoint.clone(),
+            api_token: self.api_token.clone(),
+            client: self.client.clone(),
+            subscribe_tx: None, // Sender not cloneable, recreate on use
+        }
+    }
+}
+
+unsafe impl Send for GrpcClient {}
+unsafe impl Sync for GrpcClient {}
 
 // Парсинг Create транзакции из GRPC данных
 // Адаптировано из parseCreateTransaction в filter_grpc_create.js
