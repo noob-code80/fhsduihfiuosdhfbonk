@@ -29,10 +29,22 @@ jobs:
       uses: actions/cache@v4
       id: cache-cargo-build
       with:
-        path: sniper_backup/target/
+        path: |
+          sniper_backup/target/
+          target/
         key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock', 'sniper_backup/Cargo.toml') }}
         restore-keys: |
           ${{ runner.os }}-sniper-build-
+    
+    - name: Cache Rust toolchain
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.rustup/
+          ~/.cargo/bin/
+        key: ${{ runner.os }}-rust-toolchain-${{ hashFiles('sniper_backup/rust-toolchain.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-rust-toolchain-
     
     - name: Cache MSYS2 packages
       uses: actions/cache@v4
