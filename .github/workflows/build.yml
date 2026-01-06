@@ -24,15 +24,23 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-sniper-cargo-
     
-    - name: Cache Cargo build
+    - name: Cache Cargo build (all targets)
       uses: actions/cache@v4
       with:
         path: |
           target
-          target/x86_64-pc-windows-gnu
-        key: ${{ runner.os }}-sniper-build-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '**/*.rs') }}
+        key: ${{ runner.os }}-sniper-build-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
         restore-keys: |
           ${{ runner.os }}-sniper-build-
+    
+    - name: Cache MSYS2 packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          C:\tools\msys64\var\cache\pacman
+        key: ${{ runner.os }}-msys2-packages
+        restore-keys: |
+          ${{ runner.os }}-msys2-packages-
     
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
