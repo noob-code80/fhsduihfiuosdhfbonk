@@ -99,17 +99,26 @@ jobs:
     
     - name: Build
       shell: pwsh
-      working-directory: sniper_backup
       run: |
-        $env:RUST_BACKTRACE = "1"
-        $env:PROTOC = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
-        # Используем MSYS2 MinGW для всей сборки
-        $env:CC = "gcc"
-        $env:CXX = "g++"
-        $env:MAKE = "make"
-        $env:PATH = "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;$env:PATH"
-        # Используем MinGW target вместо MSVC
-        cargo build --release --target x86_64-pc-windows-gnu
+        # Проверяем где находится Cargo.toml
+        if (Test-Path "sniper_backup/Cargo.toml") {
+          Push-Location sniper_backup
+        }
+        try {
+          $env:RUST_BACKTRACE = "1"
+          $env:PROTOC = "C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe"
+          # Используем MSYS2 MinGW для всей сборки
+          $env:CC = "gcc"
+          $env:CXX = "g++"
+          $env:MAKE = "make"
+          $env:PATH = "C:\tools\msys64\mingw64\bin;C:\tools\msys64\usr\bin;$env:PATH"
+          # Используем MinGW target вместо MSVC
+          cargo build --release --target x86_64-pc-windows-gnu
+        } finally {
+          if (Test-Path "sniper_backup/Cargo.toml") {
+            Pop-Location
+          }
+        }
       env:
         PROTOC: C:\ProgramData\chocolatey\lib\protoc\tools\bin\protoc.exe
         CC: gcc
@@ -120,5 +129,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: rust-sniper-windows
-        path: sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
+        path: |
+          sniper_backup/target/x86_64-pc-windows-gnu/release/rust-sniper.exe
+          target/x86_64-pc-windows-gnu/release/rust-sniper.exe
         retention-days: 30
+        if-no-files-found: error
