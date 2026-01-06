@@ -25,11 +25,11 @@ pub struct CreateTransaction {
     pub is_create_v2: bool,
 }
 
-#[derive(Debug, Clone)]
+// Используем тип с CryptoProvider из rustls::crypto::aws_lc_rs
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserGrpcClient>>,
+    client: Option<Arc<GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
@@ -80,7 +80,10 @@ impl GrpcClient {
             .context("Client not connected. Call connect() first")?;
         
         // Получаем stream и subscribe_tx
-        let (subscribe_tx, _updates_stream) = client.subscribe().await?;
+        let (subscribe_tx, _updates_stream): (
+            futures::channel::mpsc::Sender<SubscribeRequest>,
+            _
+        ) = client.subscribe().await?;
         self.subscribe_tx = Some(subscribe_tx.clone());
         
         // Создаем filter для транзакций Pump.fun
@@ -116,7 +119,10 @@ impl GrpcClient {
             .context("Client not connected. Call connect() first")?;
         
         // Получаем stream и subscribe_tx
-        let (mut subscribe_tx, updates_stream) = client.subscribe().await?;
+        let (mut subscribe_tx, updates_stream): (
+            futures::channel::mpsc::Sender<SubscribeRequest>,
+            _
+        ) = client.subscribe().await?;
         
         // Создаем filter для аккаунта
         let mut accounts_filter = HashMap::new();
