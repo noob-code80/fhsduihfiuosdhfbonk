@@ -25,14 +25,12 @@ pub struct CreateTransaction {
     pub is_create_v2: bool,
 }
 
-// Используем type alias для упрощения (CryptoProvider устанавливается в main через default_provider)
-type GeyserClient = GeyserGrpcClient<rustls::crypto::aws_lc_rs::CryptoProvider>;
-
-// Используем тип без явного CryptoProvider в определении (используется default из main)
+// Используем тип без явного CryptoProvider (используется default из main)
+#[derive(Clone, Debug)]
 pub struct GrpcClient {
     endpoint: String,
     api_token: String,
-    client: Option<Arc<GeyserClient>>,
+    client: Option<Arc<GeyserGrpcClient>>,
     subscribe_tx: Option<futures::channel::mpsc::Sender<SubscribeRequest>>,
 }
 
