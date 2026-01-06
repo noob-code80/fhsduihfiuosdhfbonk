@@ -1350,7 +1350,7 @@ async fn handle_create_transaction(
                                     if let Some(meta) = tx.transaction.meta {
                                         // Пытаемся извлечь количество токенов из inner_instructions
                                         // Ищем TransferChecked инструкцию в последней inner instruction
-                                        let inner_instructions: Vec<_> = meta.inner_instructions.into_iter().collect();
+                                        let inner_instructions: Vec<_> = meta.inner_instructions.into().unwrap_or_default();
                                         if let Some(last_inner) = inner_instructions.last() {
                                             if let Some(transfer_ix) = last_inner.instructions.last() {
                                                 // Декодируем data из base58
@@ -1653,7 +1653,7 @@ async fn monitor_position(state: AppState, idx: usize) {
                                                     let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                                                     let wallet = {
                                                         let s = state.read().await;
-                                                        s.wallet_keypair.as_ref().map(|k| k.clone())
+                                                        s.wallet_keypair.clone()
                                                     };
                                                     if let Some(wallet) = wallet {
                                                         if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
@@ -1730,7 +1730,7 @@ async fn monitor_position(state: AppState, idx: usize) {
                             let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                             let wallet = {
                                 let s = state.read().await;
-                                s.wallet_keypair.as_ref().map(|k| k.clone())
+                                s.wallet_keypair.clone()
                             };
                             if let Some(wallet) = wallet {
                                 if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
@@ -1865,9 +1865,8 @@ async fn monitor_positions(state: AppState) {
                 let min_sol_out = position.buy_sol * (1.0 + config.loss_threshold / 100.0);
                 let wallet_keypair = {
                     let s = state.read().await;
-                    s.wallet_keypair.as_ref().map(|k| {
-                        let cloned = k.clone();
-                        (cloned.pubkey(), cloned)
+                    s.wallet_keypair.clone().map(|k| {
+                        (k.pubkey(), k)
                     })
                 };
                 if let Some((_pubkey, wallet)) = wallet_keypair {
@@ -1998,6 +1997,11 @@ async fn run_sniper_loop(state: AppState) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Устанавливаем CryptoProvider для rustls (нужно для yellowstone-grpc-client)
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install crypto provider");
+    
     // Инициализация логирования
     // Устанавливаем уровень логирования по умолчанию если не задан через env
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
