@@ -81,8 +81,9 @@ jobs:
         # Устанавливаем необходимые пакеты
         $autoconfPath = "C:\msys64\usr\bin\autoconf.exe"
         $automakePath = "C:\msys64\usr\bin\automake.exe"
-        if (!(Test-Path $autoconfPath) -or !(Test-Path $automakePath)) {
-          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make gcc"
+        $zstdPath = "C:\msys64\mingw64\bin\zstd.exe"
+        if (!(Test-Path $autoconfPath) -or !(Test-Path $automakePath) -or !(Test-Path $zstdPath)) {
+          & "C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm autoconf automake make gcc mingw-w64-x86_64-zstd mingw-w64-x86_64-pkg-config"
         }
         
         if (!(Test-Path "C:\ProgramData\chocolatey\bin\protoc.exe")) {
@@ -98,8 +99,11 @@ jobs:
         export CC="gcc"
         export CXX="g++"
         export MAKE="make"
-        # Важно: сначала /usr/bin для autoconf/automake, потом mingw64/bin для gcc
+        # Важно: сначала /usr/bin для autoconf/automake, потом mingw64/bin для gcc и zstd
         export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
+        # Используем системную библиотеку zstd вместо компиляции из исходников
+        export ZSTD_SYS_USE_PKG_CONFIG=1
+        export PKG_CONFIG_PATH="/c/msys64/mingw64/lib/pkgconfig"
         
         # Проверяем что все инструменты доступны
         cargo --version
