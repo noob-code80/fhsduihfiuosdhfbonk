@@ -188,11 +188,6 @@ async fn update_config(
 async fn start_sniper(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Устанавливаем CryptoProvider для rustls (нужно для GRPC)
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .unwrap();
-    
     let mut sniper = state.write().await;
     
     if sniper.running {
@@ -1948,11 +1943,6 @@ async fn run_sniper_loop(state: AppState) {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Устанавливаем CryptoProvider для rustls (нужно для yellowstone-grpc-client)
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("Failed to install crypto provider");
-    
     // Инициализация логирования
     // Устанавливаем уровень логирования по умолчанию если не задан через env
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
