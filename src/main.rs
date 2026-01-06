@@ -188,6 +188,11 @@ async fn update_config(
 async fn start_sniper(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Устанавливаем CryptoProvider для rustls (нужно для GRPC)
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
+    
     let mut sniper = state.write().await;
     
     if sniper.running {
@@ -1340,7 +1345,10 @@ async fn handle_create_transaction(
                     // Получаем количество токенов из транзакции
                     let held = {
                         let rpc = RpcClient::new(RPC_URL.to_string());
-                        let sig = solana_sdk::signature::Signature::from_str(&signature).unwrap();
+                        let sig_bytes = bs58::decode(&signature).into_vec().unwrap_or(vec![]);
+                        let sig = sig_bytes.as_slice().try_into()
+                            .map(solana_sdk::signature::Signature::from)
+                            .unwrap_or_else(|_| solana_sdk::signature::Signature::from_str(&signature).unwrap());
                         match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
                             Ok(tx) => {
                                 if let Some(meta) = tx.transaction.meta {
@@ -1348,9 +1356,9 @@ async fn handle_create_transaction(
                                     if let OptionSerializer::Some(inner) = meta.inner_instructions {
                                         let transfer = inner.last().and_then(|i| i.instructions.last());
                                         if let Some(t) = transfer {
-                                            let data = bs58::decode(&t.data).into_vec().unwrap_or(vec![]);
-                                            if data.len() >= 12 && data[0] == 12 { // TransferChecked
-                                                u64::from_le_bytes(data[data.len() - 8..].try_into().unwrap_or([0; 8]))
+                                            let data_bytes = bs58::decode(&t.data).into_vec().unwrap_or(vec![]);
+                                            if data_bytes.len() >= 12 && data_bytes[0] == 12 { // TransferChecked
+                                                u64::from_le_bytes(data_bytes[data_bytes.len() - 8..].try_into().unwrap_or([0; 8]))
                                             } else {
                                                 0
                                             }
