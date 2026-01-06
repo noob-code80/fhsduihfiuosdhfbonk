@@ -875,7 +875,7 @@ async fn buy_token(
     instruction_data.push(0); // track_volume: 0 = false (u8)
     
     // Создаем инструкцию ComputeBudget для установки приорити фии и комп юнитов
-    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    use solana_sdk::compute_budget::ComputeBudgetInstruction;
     let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_price(final_price_micro_per_cu);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
     
@@ -1345,8 +1345,8 @@ async fn handle_create_transaction(
                     // Получаем количество токенов из транзакции
                     let held = {
                         let rpc = RpcClient::new(RPC_URL.to_string());
-                        let sig_bytes = bs58::decode(&signature).into_vec().unwrap_or(vec![]);
-                        let sig = sig_bytes.as_slice().try_into()
+                        let sig = bs58::decode(&signature).into_vec()
+                            .and_then(|v| v.try_into().ok())
                             .map(solana_sdk::signature::Signature::from)
                             .unwrap_or_else(|_| solana_sdk::signature::Signature::from_str(&signature).unwrap());
                         match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
@@ -1356,9 +1356,9 @@ async fn handle_create_transaction(
                                     if let OptionSerializer::Some(inner) = meta.inner_instructions {
                                         let transfer = inner.last().and_then(|i| i.instructions.last());
                                         if let Some(t) = transfer {
-                                            let data_bytes = bs58::decode(&t.data).into_vec().unwrap_or(vec![]);
-                                            if data_bytes.len() >= 12 && data_bytes[0] == 12 { // TransferChecked
-                                                u64::from_le_bytes(data_bytes[data_bytes.len() - 8..].try_into().unwrap_or([0; 8]))
+                                            let data = bs58::decode(&t.data).into_vec().unwrap_or(vec![]);
+                                            if data.len() >= 12 && data[0] == 12 { // TransferChecked
+                                                u64::from_le_bytes(data[data.len() - 8..].try_into().unwrap_or([0; 8]))
                                             } else {
                                                 0
                                             }
@@ -1518,7 +1518,7 @@ async fn sell_token(
         0
     };
     
-    use solana_compute_budget_interface::ComputeBudgetInstruction;
+    use solana_sdk::compute_budget::ComputeBudgetInstruction;
     let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_price(price_micro_per_cu);
     let compute_unit_limit_instruction = ComputeBudgetInstruction::set_compute_unit_limit(compute_units);
     
@@ -1616,10 +1616,10 @@ async fn monitor_position(state: AppState, idx: usize) {
                                         let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                                         let wallet = {
                                             let s = state.read().await;
-                                            s.wallet_keypair.clone()
+                                            s.wallet_keypair.as_ref().map(|k| Keypair::from_bytes(&k.to_bytes()).unwrap())
                                         };
                                         if let Some(wallet) = wallet {
-                                            if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
+                                            if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
                                                 error!("Sell failed: {}", e);
                                             } else {
                                                 let mut s = state.write().await;
@@ -1680,7 +1680,7 @@ async fn monitor_position(state: AppState, idx: usize) {
                                 let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                             let wallet = {
                                 let s = state.read().await;
-                                s.wallet_keypair.clone()
+                                s.wallet_keypair.as_ref().map(|k| Keypair::from_bytes(&k.to_bytes()).unwrap())
                             };
                             if let Some(wallet) = wallet {
                                     if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
