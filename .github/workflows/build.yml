@@ -14,22 +14,23 @@ jobs:
     
     - name: Cache Cargo registry
       uses: actions/cache@v4
+      id: cache-cargo-registry
       with:
         path: |
           ~/.cargo/bin/
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          sniper_backup/target/
-        key: ${{ runner.os }}-sniper-cargo-${{ hashFiles('sniper_backup/Cargo.lock') }}
+        key: ${{ runner.os }}-sniper-cargo-registry-${{ hashFiles('sniper_backup/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-sniper-cargo-
+          ${{ runner.os }}-sniper-cargo-registry-
     
     - name: Cache Cargo build
       uses: actions/cache@v4
+      id: cache-cargo-build
       with:
         path: sniper_backup/target/
-        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock') }}
+        key: ${{ runner.os }}-sniper-build-${{ hashFiles('sniper_backup/Cargo.lock', 'sniper_backup/Cargo.toml') }}
         restore-keys: |
           ${{ runner.os }}-sniper-build-
     
