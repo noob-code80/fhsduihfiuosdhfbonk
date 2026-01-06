@@ -233,17 +233,15 @@ async fn start_sniper(
     // Подключаемся к GRPC для мониторинга позиций, если включена автопродажа
     if let Some(ref config) = sniper.config {
         if config.auto_sell_enabled {
-            if let (Some(endpoint), Some(token)) = (config.grpc_endpoint.as_ref(), config.api_token.as_ref()) {
-                info!("🔌 Connecting to GRPC for position monitoring...");
-                let mut grpc = grpc_client::GrpcClient::new(endpoint.clone(), token.clone());
-                if let Err(e) = grpc.connect().await {
-                    error!("❌ Failed to connect to GRPC: {}", e);
-                } else {
-                    sniper.grpc_client = Some(Arc::new(grpc));
-                    info!("✅ GRPC connected for position monitoring");
-                }
+            let mut grpc = grpc_client::GrpcClient::new(
+                config.grpc_endpoint.clone().unwrap_or("default".to_string()),
+                config.api_token.clone().unwrap_or("".to_string())
+            );
+            if let Err(e) = grpc.connect().await {
+                error!("❌ Failed to connect to GRPC: {}", e);
             } else {
-                warn!("⚠️ Auto-sell enabled but GRPC endpoint/token not configured");
+                sniper.grpc_client = Some(Arc::new(grpc));
+                info!("✅ GRPC connected for position monitoring");
             }
         }
     }
@@ -1100,23 +1098,23 @@ async fn buy_token(
     let status_sleep_ms = if low_latency { 200 } else { 400 };
     
     for attempt in 1..=max_status_attempts {
-        match rpc_client.get_signature_status(&signature).await {
-            Ok(Some(status_result)) => {
-                match status_result {
-                    Ok(_) => {
-                        confirmed = true;
-                        info!("✅ Transaction CONFIRMED! Signature: {}", signature);
-                        break;
+        match rpc_client.get_signature_statuses_with_commitment(&[signature], solana_sdk::commitment_config::CommitmentConfig::confirmed()).await {
+            Ok(statuses) => {
+                if let Some(Some(status_result)) = statuses.first() {
+                    match status_result {
+                        Ok(_) => {
+                            confirmed = true;
+                            info!("✅ Transaction CONFIRMED! Signature: {}", signature);
+                            break;
+                        }
+                        Err(err) => {
+                            error_msg = Some(format!("{:?}", err));
+                            failed = true;
+                            error!("❌ Transaction FAILED: {:?}", err);
+                            break;
+                        }
                     }
-                    Err(err) => {
-                        error_msg = Some(format!("{:?}", err));
-                        failed = true;
-                        error!("❌ Transaction FAILED: {:?}", err);
-                        break;
-                    }
-                }
-            }
-            Ok(None) => {
+                } else {
                 if attempt < max_status_attempts {
                     if !low_latency && attempt % 5 == 0 {
                         info!("⏳ Transaction pending, waiting... (attempt {}/{})", attempt, max_status_attempts);
@@ -1342,31 +1340,17 @@ async fn handle_create_transaction(
                     // Получаем количество токенов из транзакции
                     let held = {
                         let rpc = RpcClient::new(RPC_URL.to_string());
-                        let sig_bytes = bs58::decode(&signature).into_vec().ok()
-                            .and_then(|bytes| solana_sdk::signature::Signature::try_from(bytes.as_slice()).ok());
-                        if let Some(sig) = sig_bytes {
-                            match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
-                                Ok(tx) => {
-                                    if let Some(meta) = tx.transaction.meta {
-                                        // Пытаемся извлечь количество токенов из inner_instructions
-                                        // Ищем TransferChecked инструкцию в последней inner instruction
-                                        let inner_instructions: Vec<_> = meta.inner_instructions.into().unwrap_or_default();
-                                        if let Some(last_inner) = inner_instructions.last() {
-                                            if let Some(transfer_ix) = last_inner.instructions.last() {
-                                                // Декодируем data из base58
-                                                if let Ok(data_bytes) = bs58::decode(&transfer_ix.data).into_vec() {
-                                                    let data_bytes: Vec<u8> = data_bytes;
-                                                    // TransferChecked: discriminator (1 byte) + amount (8 bytes)
-                                                    // Проверяем что это TransferChecked (discriminator = 12)
-                                                    if data_bytes.len() >= 12 && data_bytes[0] == 12 {
-                                                        let amount_bytes = &data_bytes[data_bytes.len() - 8..];
-                                                        u64::from_le_bytes(amount_bytes.try_into().unwrap_or([0; 8]))
-                                                    } else {
-                                                        0
-                                                    }
-                                                } else {
-                                                    0
-                                                }
+                        let sig = solana_sdk::signature::Signature::from_str(&signature).unwrap();
+                        match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
+                            Ok(tx) => {
+                                if let Some(meta) = tx.transaction.meta {
+                                    use solana_transaction_status::OptionSerializer;
+                                    if let OptionSerializer::Some(inner) = meta.inner_instructions {
+                                        let transfer = inner.last().and_then(|i| i.instructions.last());
+                                        if let Some(t) = transfer {
+                                            let data = bs58::decode(&t.data).into_vec().unwrap_or(vec![]);
+                                            if data.len() >= 12 && data[0] == 12 { // TransferChecked
+                                                u64::from_le_bytes(data[data.len() - 8..].try_into().unwrap_or([0; 8]))
                                             } else {
                                                 0
                                             }
@@ -1376,11 +1360,11 @@ async fn handle_create_transaction(
                                     } else {
                                         0
                                     }
+                                } else {
+                                    0
                                 }
-                                Err(_) => 0,
                             }
-                        } else {
-                            0
+                            Err(_) => 0,
                         }
                     };
                     
@@ -1591,100 +1575,53 @@ async fn sell_token(
 
 // Мониторинг одной позиции через GRPC или RPC fallback
 async fn monitor_position(state: AppState, idx: usize) {
-    let (config, grpc_client) = {
+    let (config, wallet, grpc_client) = {
         let s = state.read().await;
-        let config = s.config.clone();
-        let grpc_client = s.grpc_client.clone();
-        (config, grpc_client)
+        (s.config.clone().unwrap(), s.wallet_keypair.clone(), s.grpc_client.clone())
     };
-    
-    if config.is_none() {
-        return;
-    }
-    
-    let config = config.unwrap();
     
     if let Some(grpc) = grpc_client {
         let curve_str = {
             let s = state.read().await;
-            if idx >= s.positions.len() {
-                return;
-            }
             s.positions[idx].bonding_curve.to_string()
         };
-        
-        // Клонируем Arc и создаем mutable reference
         let mut grpc_clone = (*grpc).clone();
-        
-        match grpc_clone.subscribe_to_account(&curve_str).await {
-            Ok(mut stream) => {
-                while let Some(update_result) = stream.next().await {
-                    match update_result {
-                        Ok(up) => {
-                            // Парсим данные из GRPC update
-                            if let Some(update_oneof) = up.update_oneof {
-                                if let yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof::Account(acc_update) = update_oneof {
-                                    if let Some(account_info) = acc_update.account {
-                                        let data = account_info.data;
-                                        if data.len() >= 24 {
-                                            let virtual_token = u64::from_le_bytes(
-                                                data[8..16].try_into().unwrap_or([0; 8])
-                                            );
-                                            let virtual_sol = u64::from_le_bytes(
-                                                data[16..24].try_into().unwrap_or([0; 8])
-                                            );
-                                            
-                                            if virtual_token > 0 && virtual_sol > 0 {
-                                                let price = virtual_sol as f64 / virtual_token as f64;
-                                                let pos = {
-                                                    let s = state.read().await;
-                                                    if idx >= s.positions.len() {
-                                                        break;
-                                                    }
-                                                    s.positions[idx].clone()
-                                                };
-                                                
-                                                let current_val = (pos.held_tokens as f64 * price) / 1e9;
-                                                let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
-                                                let mcap = (1_000_000_000.0 * price) / 1e9;
-                                                info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, mcap);
-                                                
-                                                if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
-                                                    let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
-                                                    let wallet = {
-                                                        let s = state.read().await;
-                                                        s.wallet_keypair.clone()
-                                                    };
-                                                    if let Some(wallet) = wallet {
-                                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
-                                                            error!("Sell failed: {}", e);
-                                                        } else {
-                                                            let mut s = state.write().await;
-                                                            if idx < s.positions.len() {
-                                                                s.positions.remove(idx);
-                                                            }
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
+        if let Ok(stream) = grpc_clone.subscribe_to_account(&curve_str).await {
+            let mut stream = stream;
+            while let Some(update) = stream.next().await {
+                if let Ok(up) = update {
+                    use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
+                    if let Some(acc_update) = up.update_oneof.and_then(|u| if let UpdateOneof::Account(a) = u { Some(a) } else { None }) {
+                        if let Some(acc) = acc_update.account {
+                            let data = acc.data;
+                            if data.len() >= 24 {
+                                let virtual_token = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                                let virtual_sol = u64::from_le_bytes(data[16..24].try_into().unwrap());
+                                if virtual_token > 0 {
+                                    let price = virtual_sol as f64 / virtual_token as f64;
+                                    let pos = state.read().await.positions[idx].clone();
+                                    let current_val = (pos.held_tokens as f64 * price) / 1e9;
+                                    let profit_pct = ((current_val / pos.buy_sol) - 1.0) * 100.0;
+                                    info!("Position {} profit: {:.2}% (MCAP: {:.0} SOL)", pos.mint, profit_pct, (1_000_000_000.0 * price) / 1e9);
+                                    
+                                    if profit_pct >= config.profit_threshold || profit_pct <= config.loss_threshold {
+                                        let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
+                                        if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet.unwrap(), config.priority_fee, config.compute_units).await {
+                                            error!("Sell failed: {}", e);
+                                        } else {
+                                            let mut s = state.write().await;
+                                            s.positions.remove(idx);
+                                            break;
                                         }
                                     }
                                 }
                             }
                         }
-                        Err(e) => {
-                            error!("GRPC stream error: {}", e);
-                            break;
-                        }
                     }
                 }
             }
-            Err(e) => {
-                warn!("Failed to subscribe to account via GRPC: {}, falling back to RPC", e);
-            }
         }
-    }
+    } else {
     
     // Fallback RPC poll
     let rpc = RpcClient::new(RPC_URL.to_string());
