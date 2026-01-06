@@ -1116,16 +1116,15 @@ async fn buy_token(
             }
             Ok(None) => {
                 if attempt < max_status_attempts {
-                        if !low_latency && attempt % 5 == 0 {
-                            info!("⏳ Transaction pending, waiting... (attempt {}/{})", attempt, max_status_attempts);
-                        }
-                        tokio::time::sleep(tokio::time::Duration::from_millis(status_sleep_ms)).await;
-                    } else {
-                        warn!("⚠️ Transaction status not found after {} attempts - likely dropped", max_status_attempts);
-                        error_msg = Some("Dropped — low fee or congestion".to_string());
+                    if !low_latency && attempt % 5 == 0 {
+                        info!("⏳ Transaction pending, waiting... (attempt {}/{})", attempt, max_status_attempts);
                     }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(status_sleep_ms)).await;
+                } else {
+                    warn!("⚠️ Transaction status not found after {} attempts - likely dropped", max_status_attempts);
+                    error_msg = Some("Dropped — low fee or congestion".to_string());
                 }
-            }
+            },
             Err(e) => {
                 if attempt < max_status_attempts {
                     if !low_latency && attempt % 5 == 0 {
