@@ -1344,7 +1344,7 @@ async fn handle_create_transaction(
                         match rpc.get_transaction(&sig, UiTransactionEncoding::JsonParsed).await {
                             Ok(tx) => {
                                 if let Some(meta) = tx.transaction.meta {
-                                    use solana_transaction_status_client_types::option_serializer::OptionSerializer;
+                                    use solana_transaction_status::option_serializer::OptionSerializer;
                                     if let OptionSerializer::Some(inner) = meta.inner_instructions {
                                         let transfer = inner.last().and_then(|i| i.instructions.last());
                                         if let Some(t) = transfer {
@@ -1608,7 +1608,7 @@ async fn monitor_position(state: AppState, idx: usize) {
                                         let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                                         let wallet = {
                                             let s = state.read().await;
-                                            s.wallet_keypair.as_ref()
+                                            s.wallet_keypair.clone()
                                         };
                                         if let Some(wallet) = wallet {
                                             if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, wallet, config.priority_fee, config.compute_units).await {
@@ -1672,7 +1672,7 @@ async fn monitor_position(state: AppState, idx: usize) {
                                 let min_sol_out = pos.buy_sol * (1.0 + config.loss_threshold / 100.0);
                             let wallet = {
                                 let s = state.read().await;
-                                s.wallet_keypair.as_ref()
+                                s.wallet_keypair.clone()
                             };
                             if let Some(wallet) = wallet {
                                     if let Err(e) = sell_token(&pos.mint, pos.held_tokens, min_sol_out, &wallet, config.priority_fee, config.compute_units).await {
@@ -1808,7 +1808,7 @@ async fn monitor_positions(state: AppState) {
                 let min_sol_out = position.buy_sol * (1.0 + config.loss_threshold / 100.0);
                 let wallet_keypair = {
                     let s = state.read().await;
-                    s.wallet_keypair.as_ref().map(|k| {
+                    s.wallet_keypair.clone().map(|k| {
                         (k.pubkey(), k)
                     })
                 };
@@ -2010,13 +2010,10 @@ async fn main() -> Result<()> {
     info!("📡 Waiting for configuration from UI...");
     
     use axum::Server;
-    use tokio::net::TcpListener as TokioTcpListener;
-    use std::net::TcpListener as StdTcpListener;
     
     let std_listener = listener.into_std()?;
-    let listener = TokioTcpListener::from_std(std_listener)?;
     
-    Server::from_tcp(listener)?
+    Server::from_tcp(std_listener)?
         .serve(app.into_make_service())
         .await?;
     
