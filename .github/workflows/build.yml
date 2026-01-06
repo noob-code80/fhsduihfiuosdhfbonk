@@ -34,7 +34,9 @@ jobs:
     - name: Cache Cargo build
       uses: actions/cache@v4
       with:
-        path: target
+        path: |
+          sniper_backup/target
+          target
         key: ${{ runner.os }}-cargo-build-v1-${{ hashFiles('sniper_backup/Cargo.lock') }}-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-cargo-build-v1-${{ hashFiles('sniper_backup/Cargo.lock') }}-
@@ -72,31 +74,27 @@ jobs:
         if (!(Test-Path "C:\ProgramData\chocolatey\bin\protoc.exe")) {
           choco install protoc -y
         }
-        $env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH"
-        $env:PROTOC = "C:\ProgramData\chocolatey\bin\protoc.exe"
-        $env:CC = "gcc"
-        $env:CXX = "g++"
-        $env:MAKE = "make"
     
     - name: Build
-      shell: pwsh
+      shell: bash
       run: |
-        if (Test-Path "sniper_backup/Cargo.toml") {
-          Push-Location sniper_backup
-        }
-        try {
-          cargo build --release --target x86_64-pc-windows-gnu --verbose
-        } finally {
-          if (Test-Path "sniper_backup/Cargo.toml") {
-            Pop-Location
-          }
-        }
-      env:
-        PROTOC: C:\ProgramData\chocolatey\bin\protoc.exe
-        CC: gcc
-        CXX: g++
-        MAKE: make
-        PATH: C:\msys64\mingw64\bin;C:\msys64\usr\bin;$env:PATH
+        export PATH="$HOME/.cargo/bin:$PATH"
+        export RUST_BACKTRACE=1
+        export PROTOC="/c/ProgramData/chocolatey/bin/protoc.exe"
+        export CC="gcc"
+        export CXX="g++"
+        export MAKE="make"
+        export PATH="/c/msys64/mingw64/bin:/c/msys64/usr/bin:$PATH"
+        
+        # Проверяем что cargo доступен
+        cargo --version
+        
+        # Определяем working directory
+        if [ -f "sniper_backup/Cargo.toml" ]; then
+          cd sniper_backup
+        fi
+        
+        cargo build --release --target x86_64-pc-windows-gnu --verbose
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
